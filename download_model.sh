@@ -15,5 +15,6 @@ export HF_ENDPOINT=http://huggingface-proxy-sg.byted.org
 export HF_HUB_DISABLE_XET=1
 export HF_HUB_ENABLE_HF_TRANSFER=0
 python3 -m pip install --user -U "huggingface_hub[cli]" "typer>=0.12"
-hf download openai/gpt-oss-120b
-hf download lmsys/gpt-oss-120b-bf16
+# hf download openai/gpt-oss-120b
+# hf download lmsys/gpt-oss-120b-bf16
+hf download Qwen/Qwen3-30B-A3B

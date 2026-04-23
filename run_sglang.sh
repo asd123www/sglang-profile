@@ -13,42 +13,98 @@ export HF_HUB_ENABLE_HF_TRANSFER=0
 export TRITON_CACHE_DIR=/tmp/triton_cache
 
 MODE="${1:-unified}"
-MODEL="lmsys/gpt-oss-120b-bf16"
+MODEL="Qwen/Qwen3-30B-A3B"
 TRANSFER_BACKEND="${DISAGG_BACKEND:-mooncake}"  # options: mooncake, nixl, mori
-COMMON_ARGS="--model-path $MODEL --tp 4 --reasoning-parser gpt-oss --disable-custom-all-reduce --trust-remote-code"
+ENABLE_HICACHE="${ENABLE_HICACHE:-1}"
+ENABLE_DECODE_KVCACHE_OFFLOAD="${ENABLE_DECODE_KVCACHE_OFFLOAD:-1}"
+HICACHE_PAGE_SIZE="${HICACHE_PAGE_SIZE:-64}"
+HICACHE_RATIO="${HICACHE_RATIO:-2}"
+HICACHE_IO_BACKEND="${HICACHE_IO_BACKEND:-direct}"
+HICACHE_MEM_LAYOUT="${HICACHE_MEM_LAYOUT:-page_first_direct}"
+HICACHE_WRITE_POLICY="${HICACHE_WRITE_POLICY:-write_through}"
+HICACHE_STORAGE_BACKEND="${HICACHE_STORAGE_BACKEND:-file}"
+HICACHE_PREFETCH_POLICY="${HICACHE_PREFETCH_POLICY:-timeout}"
+
+COMMON_ARGS=(
+    --model-path "$MODEL"
+    --tp 4
+    --reasoning-parser qwen3
+    --disable-custom-all-reduce
+    --trust-remote-code
+)
 
 # Mooncake RDMA registration can fail when PyTorch uses expandable segments.
 if [[ "$TRANSFER_BACKEND" == "mooncake" && ( "$MODE" == "prefill" || "$MODE" == "decode" ) ]]; then
     unset PYTORCH_CUDA_ALLOC_CONF
 fi
 
+PREFILL_HICACHE_ARGS=()
+DECODE_HICACHE_ARGS=()
+
+if [[ "$ENABLE_HICACHE" == "1" && ( "$MODE" == "prefill" || "$MODE" == "decode" ) ]]; then
+    # Use the built-in file backend for same-node PD by default.
+    if [[ "$HICACHE_STORAGE_BACKEND" == "file" ]]; then
+        export SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR="${SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR:-/tmp/hicache}"
+    fi
+
+    HICACHE_COMMON_ARGS=(
+        --page-size "$HICACHE_PAGE_SIZE"
+        --hicache-ratio "$HICACHE_RATIO"
+        --hicache-mem-layout "$HICACHE_MEM_LAYOUT"
+        --hicache-io-backend "$HICACHE_IO_BACKEND"
+        --hicache-write-policy "$HICACHE_WRITE_POLICY"
+        --hicache-storage-backend "$HICACHE_STORAGE_BACKEND"
+        --hicache-storage-prefetch-policy "$HICACHE_PREFETCH_POLICY"
+    )
+
+    if [[ -n "${HICACHE_SIZE:-}" ]]; then
+        HICACHE_COMMON_ARGS+=(--hicache-size "$HICACHE_SIZE")
+    fi
+
+    if [[ -n "${HICACHE_STORAGE_BACKEND_EXTRA_CONFIG:-}" ]]; then
+        HICACHE_COMMON_ARGS+=(--hicache-storage-backend-extra-config "$HICACHE_STORAGE_BACKEND_EXTRA_CONFIG")
+    fi
+
+    PREFILL_HICACHE_ARGS=(
+        --enable-hierarchical-cache
+        "${HICACHE_COMMON_ARGS[@]}"
+    )
+
+    DECODE_HICACHE_ARGS=("${HICACHE_COMMON_ARGS[@]}")
+    if [[ "$ENABLE_DECODE_KVCACHE_OFFLOAD" == "1" ]]; then
+        DECODE_HICACHE_ARGS+=(--disaggregation-decode-enable-offload-kvcache)
+    fi
+fi
+
 case "$MODE" in
 
 unified)
-    sglang serve $COMMON_ARGS
+    sglang serve "${COMMON_ARGS[@]}"
     ;;
 
 prefill)
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
-    sglang serve $COMMON_ARGS \
+    sglang serve "${COMMON_ARGS[@]}" \
         --host 127.0.0.1 \
         --port 30000 \
         --disaggregation-mode prefill \
         --disaggregation-transfer-backend "$TRANSFER_BACKEND" \
         --disaggregation-bootstrap-port 63465 \
-        --disaggregation-ib-device mlx5_1
+        --disaggregation-ib-device mlx5_1 \
+        "${PREFILL_HICACHE_ARGS[@]}"
     ;;
 
 decode)
     CUDA_VISIBLE_DEVICES=4,5,6,7 \
-    sglang serve $COMMON_ARGS \
+    sglang serve "${COMMON_ARGS[@]}" \
         --host 127.0.0.1 \
         --port 30001 \
         --disaggregation-mode decode \
         --disaggregation-transfer-backend "$TRANSFER_BACKEND" \
         --disaggregation-bootstrap-port 63465 \
         --base-gpu-id 0 \
-        --disaggregation-ib-device mlx5_5
+        --disaggregation-ib-device mlx5_5 \
+        "${DECODE_HICACHE_ARGS[@]}"
     ;;
 
 router)

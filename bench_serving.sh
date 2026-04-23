@@ -8,7 +8,11 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SGLANG_PYTHON_DIR="${SCRIPT_DIR}/sglang/python"
 export PYTHONPATH="${SGLANG_PYTHON_DIR}${PYTHONPATH:+:$PYTHONPATH}"
 
-MODEL="lmsys/gpt-oss-120b-bf16"
+export HF_ENDPOINT=http://huggingface-proxy-sg.byted.org
+export HF_HUB_DISABLE_XET=1
+export HF_HUB_ENABLE_HF_TRANSFER=0
+
+MODEL="Qwen/Qwen3-30B-A3B"
 BASE_URL="http://127.0.0.1:8000"
 PORT=8000
 BACKEND="sglang"
