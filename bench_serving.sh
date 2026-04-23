@@ -6,13 +6,14 @@
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SGLANG_PYTHON_DIR="${SCRIPT_DIR}/sglang/python"
+export PYTHONPATH="${SGLANG_PYTHON_DIR}${PYTHONPATH:+:$PYTHONPATH}"
 
 MODEL="lmsys/gpt-oss-120b-bf16"
-BASE_URL="http://127.0.0.1:30000"
-PORT=30000
+BASE_URL="http://127.0.0.1:8000"
+PORT=8000
 BACKEND="sglang"
 OUTPUT_DIR="bench_results"
-SGLANG_DIR="/Users/bytedance/Documents/sglang"
+SGLANG_DIR="${SCRIPT_DIR}/sglang"
 HICACHE_DIR="$SGLANG_DIR/benchmark/hicache"
 
 mkdir -p "$OUTPUT_DIR"
