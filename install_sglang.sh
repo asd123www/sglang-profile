@@ -6,6 +6,7 @@ source $HOME/.cargo/env
 
 # install nixl for cu129
 pip install nixl[cu12]
+pip install sglang-router
 
 # install sglang
 git clone https://github.com/sgl-project/sglang.git
