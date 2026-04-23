@@ -4,6 +4,9 @@
 #
 # Prerequisites: sglang server must be running (see run_sglang.sh)
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SGLANG_PYTHON_DIR="${SCRIPT_DIR}/sglang/python"
+
 MODEL="lmsys/gpt-oss-120b-bf16"
 BASE_URL="http://127.0.0.1:30000"
 PORT=30000
