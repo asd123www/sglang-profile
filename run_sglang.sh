@@ -2,8 +2,8 @@
 # Run sglang, also needs huggingface proxy, and no http proxy.
 # Usage:
 #   bash run_sglang.sh              # unified mode (prefill + decode together)
-#   bash run_sglang.sh prefill      # PD disaggregation: prefill server (GPUs 0-3, port 30000)
-#   bash run_sglang.sh decode       # PD disaggregation: decode server  (GPUs 4-7, port 30001)
+#   bash run_sglang.sh prefill      # PD disaggregation: prefill server (GPUs 0-3, TP=4, port 30000)
+#   bash run_sglang.sh decode       # PD disaggregation: decode server  (GPUs 4-5, TP=2, port 30001)
 #   bash run_sglang.sh router       # PD disaggregation: router         (port 8000)
 
 unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
@@ -15,6 +15,14 @@ export TRITON_CACHE_DIR=/tmp/triton_cache
 MODE="${1:-unified}"
 MODEL="Qwen/Qwen3-30B-A3B"
 TRANSFER_BACKEND="${DISAGG_BACKEND:-mooncake}"  # options: mooncake, nixl, mori
+UNIFIED_TP="${UNIFIED_TP:-4}"
+PREFILL_TP="${PREFILL_TP:-4}"
+DECODE_TP="${DECODE_TP:-2}"
+PREFILL_CUDA_VISIBLE_DEVICES="${PREFILL_CUDA_VISIBLE_DEVICES:-0,1,2,3}"
+DECODE_CUDA_VISIBLE_DEVICES="${DECODE_CUDA_VISIBLE_DEVICES:-4,5}"
+ENABLE_STAGING_BUFFER="${ENABLE_STAGING_BUFFER:-1}"
+STAGING_BUFFER_SIZE_MB="${STAGING_BUFFER_SIZE_MB:-64}"
+STAGING_POOL_SIZE_MB="${STAGING_POOL_SIZE_MB:-4096}"
 ENABLE_HICACHE="${ENABLE_HICACHE:-1}"
 ENABLE_DECODE_KVCACHE_OFFLOAD="${ENABLE_DECODE_KVCACHE_OFFLOAD:-1}"
 HICACHE_PAGE_SIZE="${HICACHE_PAGE_SIZE:-64}"
@@ -25,9 +33,8 @@ HICACHE_WRITE_POLICY="${HICACHE_WRITE_POLICY:-write_through}"
 HICACHE_STORAGE_BACKEND="${HICACHE_STORAGE_BACKEND:-file}"
 HICACHE_PREFETCH_POLICY="${HICACHE_PREFETCH_POLICY:-timeout}"
 
-COMMON_ARGS=(
+BASE_ARGS=(
     --model-path "$MODEL"
-    --tp 4
     --reasoning-parser qwen3
     --disable-custom-all-reduce
     --trust-remote-code
@@ -36,6 +43,14 @@ COMMON_ARGS=(
 # Mooncake RDMA registration can fail when PyTorch uses expandable segments.
 if [[ "$TRANSFER_BACKEND" == "mooncake" && ( "$MODE" == "prefill" || "$MODE" == "decode" ) ]]; then
     unset PYTORCH_CUDA_ALLOC_CONF
+fi
+
+# For non-MLA models like Qwen, enable the Mooncake GPU staging buffer when
+# prefill and decode use different TP sizes.
+if [[ "$TRANSFER_BACKEND" == "mooncake" && "$PREFILL_TP" != "$DECODE_TP" && "$ENABLE_STAGING_BUFFER" == "1" ]]; then
+    export SGLANG_DISAGG_STAGING_BUFFER=1
+    export SGLANG_DISAGG_STAGING_BUFFER_SIZE_MB="$STAGING_BUFFER_SIZE_MB"
+    export SGLANG_DISAGG_STAGING_POOL_SIZE_MB="$STAGING_POOL_SIZE_MB"
 fi
 
 PREFILL_HICACHE_ARGS=()
@@ -79,12 +94,14 @@ fi
 case "$MODE" in
 
 unified)
-    sglang serve "${COMMON_ARGS[@]}"
+    sglang serve "${BASE_ARGS[@]}" \
+        --tp "$UNIFIED_TP"
     ;;
 
 prefill)
-    CUDA_VISIBLE_DEVICES=0,1,2,3 \
-    sglang serve "${COMMON_ARGS[@]}" \
+    CUDA_VISIBLE_DEVICES="$PREFILL_CUDA_VISIBLE_DEVICES" \
+    sglang serve "${BASE_ARGS[@]}" \
+        --tp "$PREFILL_TP" \
         --host 127.0.0.1 \
         --port 30000 \
         --disaggregation-mode prefill \
@@ -95,8 +112,9 @@ prefill)
     ;;
 
 decode)
-    CUDA_VISIBLE_DEVICES=4,5,6,7 \
-    sglang serve "${COMMON_ARGS[@]}" \
+    CUDA_VISIBLE_DEVICES="$DECODE_CUDA_VISIBLE_DEVICES" \
+    sglang serve "${BASE_ARGS[@]}" \
+        --tp "$DECODE_TP" \
         --host 127.0.0.1 \
         --port 30001 \
         --disaggregation-mode decode \
